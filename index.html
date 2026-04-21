@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>中国地势三级阶梯 - 3D编辑版</title>
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 ECharts 核心库 -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <!-- 引入 ECharts GL 3D 扩展库 -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts-gl@2.0.9/dist/echarts-gl.min.js"></script>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            /* 宣纸/水墨风格背景 */
+            background: radial-gradient(circle at center, #f5f4ef 0%, #e2dfd5 100%);
+            color: #2c2825;
+            font-family: 'KaiTi', 'STKaiti', 'PingFang SC', serif;
+            overflow: hidden;
+        }
+        
+        /* 模拟纸张纹理遮罩层 */
+        .paper-texture {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            opacity: 0.4;
+            pointer-events: none;
+            background-image: url("data:image/svg+xml,%3Csvg width='100' height='100' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100' height='100' filter='url(%23noise)' opacity='0.08'/%3E%3C/svg%3E");
+            z-index: 0;
+        }
+
+        #map-container {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0; left: 0;
+            z-index: 1;
+        }
+
+        /* 竖排文字 */
+        .vertical-text {
+            writing-mode: vertical-rl;
+            text-orientation: upright;
+            letter-spacing: 0.4em;
+        }
+
+        /* 国风卡片样式 (按钮使用) */
+        .ink-panel {
+            background: rgba(248, 247, 242, 0.85);
+            backdrop-filter: blur(8px);
+            border: 1px solid #d2cdb5;
+            box-shadow: 2px 4px 16px rgba(0, 0, 0, 0.08);
+            border-radius: 4px;
+        }
+
+        /* 底部导航按钮 */
+        .nav-btn {
+            transition: all 0.4s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .nav-btn.active {
+            color: #fff;
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.15);
+        }
+        .nav-btn.active::after {
+            content: '';
+            position: absolute;
+            bottom: -2px; left: 10%; width: 80%; height: 3px;
+            background-color: currentColor;
+            border-radius: 2px;
+        }
+        
+        /* 操作提示层 */
+        .drag-hint {
+            position: absolute;
+            bottom: 80px; left: 50%; transform: translateX(-50%);
+            z-index: 10;
+            color: rgba(92, 85, 75, 0.6);
+            font-size: 13px;
+            pointer-events: none;
+            letter-spacing: 1px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="paper-texture"></div>
+
+    <!-- 右侧竖排书法标题 -->
+    <div class="absolute top-12 right-12 z-10 pointer-events-none">
+        <h1 class="vertical-text text-5xl font-bold text-[#2c2825] drop-shadow-[2px_2px_4px_rgba(0,0,0,0.2)]" style="font-family: 'STXingkai', 'KaiTi', serif;">
+            中国地势三级阶梯
+        </h1>
+    </div>
+
+    <!-- 3D 拖拽提示 -->
+    <div class="drag-hint">支持鼠标左键旋转 / 右键平移 / 滚轮缩放查看 3D 抬起地形</div>
+
+    <!-- 底部居中导航栏 -->
+    <div class="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-10 flex space-x-4">
+        <button id="btn-step1" class="nav-btn px-5 py-2 rounded ink-panel text-[15px] font-bold text-[#2c2825] hover:bg-[#eae6db]" onclick="highlightStep('step1')">
+            第一级阶梯
+        </button>
+        <button id="btn-step2" class="nav-btn px-5 py-2 rounded ink-panel text-[15px] font-bold text-[#2c2825] hover:bg-[#eae6db]" onclick="highlightStep('step2')">
+            第二级阶梯
+        </button>
+        <button id="btn-step3" class="nav-btn px-5 py-2 rounded ink-panel text-[15px] font-bold text-[#2c2825] hover:bg-[#eae6db]" onclick="highlightStep('step3')">
+            第三级阶梯
+        </button>
+        <button class="nav-btn px-4 py-2 rounded ink-panel text-sm text-[#5c554b] hover:bg-[#eae6db] ml-2" onclick="resetMap()">
+            复原
+        </button>
+    </div>
+
+    <!-- ECharts 地图容器 -->
+    <div id="map-container"></div>
+
+    <script>
+        // 国风阶梯配色与 3D 升起高度配置
+        const stepsData = {
+            step1: {
+                id: 'step1', name: '第一级阶梯', 
+                color: '#b56d61', // 丹砂红
+                targetHeight: 7.5,
+                provinces: ["西藏", "青海"],
+                repProvince: "西藏", // 代表省份，用于追踪动画高度
+                labelCoords: [85.0, 31.5], // 向左下方移动
+                altitudeText: '4000米以上'
+            },
+            step2: {
+                id: 'step2', name: '第二级阶梯', 
+                color: '#cca46a', // 缃叶黄
+                targetHeight: 4.0,
+                provinces: ["新疆", "甘肃", "宁夏", "内蒙", "四川", "重庆", "云南", "贵州", "陕西", "山西"],
+                repProvince: "甘肃", 
+                labelCoords: [105.0, 32.5], // 向下方移动
+                altitudeText: '1000~2000米'
+            },
+            step3: {
+                id: 'step3', name: '第三级阶梯', 
+                color: '#8da384', // 竹青绿
+                targetHeight: 1.5,
+                provinces: ["黑龙江", "吉林", "辽宁", "北京", "天津", "河北", "山东", "河南", "江苏", "安徽", "湖北", "湖南", "江西", "浙江", "上海", "福建", "广东", "广西", "海南", "台湾", "香港", "澳门"],
+                repProvince: "江苏",
+                labelCoords: [113.5, 23.5], // 移动到广东省区域
+                altitudeText: '500米以下'
+            }
+        };
+
+        // 模糊匹配省份获取对应阶梯
+        function getStepKeyByProvince(provinceName) {
+            for (let key in stepsData) {
+                if (stepsData[key].provinces.some(p => provinceName.includes(p))) {
+                    return key;
+                }
+            }
+            return 'step3'; // 岛屿等默认归入第三阶梯
+        }
+
+        const chartDom = document.getElementById('map-container');
+        const myChart = echarts.init(chartDom);
+        const geoJSONUrl = 'https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json';
+        
+        let currentGeoJson = null; 
+        let activeSteps = new Set();
+        
+        // --- 自定义动画引擎状态变量 ---
+        let currentHeights = {}; 
+        let animationFrameId = null;
+
+        myChart.showLoading({ text: '物理厚度引擎演算中...', color: '#4a443c', maskColor: 'rgba(245, 244, 239, 1)' });
+
+        fetch(geoJSONUrl)
+            .then(response => response.json())
+            .then(geoJson => {
+                currentGeoJson = geoJson;
+                myChart.hideLoading();
+                echarts.registerMap('china', geoJson);
+                
+                // 初始化所有省份的当前高度为 1.0 (基础平地)
+                geoJson.features.forEach(feature => {
+                    currentHeights[feature.properties.name] = 1.0;
+                });
+                
+                const initialOption = {
+                    backgroundColor: 'transparent',
+                    geo3D: {
+                        map: 'china',
+                        roam: true,
+                        shading: 'lambert', // 开启真实物理光影
+                        label: { show: false },
+                        itemStyle: {
+                            color: '#e6e3da', // 使用纯实色
+                            opacity: 1, // 【关键修复 1】：强制 100% 不透明，彻底消灭渲染顺序错乱导致的竖线闪烁
+                            borderWidth: 0 // 关闭边框防穿模
+                        },
+                        viewControl: {
+                            projection: 'perspective',
+                            autoRotate: false,
+                            damping: 0.8,
+                            distance: 105, 
+                            alpha: 40,     
+                            beta: 5        
+                        },
+                        light: {
+                            main: { 
+                                color: '#fff', 
+                                intensity: 1.2, 
+                                shadow: true, 
+                                shadowQuality: 'high', 
+                                alpha: 45, 
+                                beta: -30 
+                            },
+                            ambient: { 
+                                color: '#fff', 
+                                intensity: 0.6 
+                            }
+                        },
+                        // 初始平地
+                        regions: getRegionsStateForRender(currentHeights) 
+                    },
+                    series: [{
+                        type: 'scatter3D',
+                        coordinateSystem: 'geo3D',
+                        symbolSize: 0, // 隐藏实际散点，只呈现清晰文字标签
+                        data: getLabelData(currentHeights)
+                    }]
+                };
+                myChart.setOption(initialOption);
+            });
+
+        // 辅助函数：根据当前高度生成渲染数据
+        function getRegionsStateForRender(heightsMap) {
+            if (!currentGeoJson) return [];
+            return currentGeoJson.features.map(feature => {
+                const name = feature.properties.name;
+                const stepKey = getStepKeyByProvince(name);
+                const isActive = activeSteps.has(stepKey);
+                
+                return {
+                    name: name,
+                    height: heightsMap[name] || 1.0,
+                    itemStyle: {
+                        // 动态切换颜色。未抬起时使用稳重的灰白色 #e6e3da
+                        color: isActive ? stepsData[stepKey].color : '#e6e3da',
+                        opacity: 1, // 【关键修复 1 延续】：保持绝对不透明
+                        borderWidth: 0
+                    }
+                };
+            });
+        }
+
+        // 辅助函数：动态生成跟随 3D 高度的文字标签
+        function getLabelData(heightsMap) {
+            if (!currentGeoJson) return [];
+            let data = [];
+            ['step1', 'step2', 'step3'].forEach(key => {
+                if (activeSteps.has(key)) {
+                    const step = stepsData[key];
+                    // 获取该阶梯当前的插值高度，使得标签能跟随地形一同平滑升降
+                    const currentZ = heightsMap[step.repProvince] || 1.0; 
+                    data.push({
+                        name: step.name,
+                        value: [step.labelCoords[0], step.labelCoords[1], currentZ + 1.5], // 在地形高度基础上增加 Z 轴偏移量防穿模
+                        label: {
+                            show: true,
+                            formatter: step.altitudeText,
+                            textStyle: {
+                                color: '#2c2825', // 浓墨色
+                                fontSize: 18, // 缩小字号，防止渗出
+                                fontWeight: 'bold', // 加粗显示
+                                fontFamily: '"Microsoft YaHei", "微软雅黑", sans-serif', // 替换为微软雅黑
+                                backgroundColor: 'transparent', // 移除背景框
+                                borderWidth: 0, // 移除边框
+                                textBorderColor: 'rgba(255, 255, 255, 0.8)', // 增加白色文字描边，使其在地图底色上更突出
+                                textBorderWidth: 3, // 描边厚度
+                                textShadowColor: 'rgba(0, 0, 0, 0.3)', // 添加阴影增强立体感
+                                textShadowBlur: 5,
+                                textShadowOffsetY: 2
+                            }
+                        }
+                    });
+                }
+            });
+            return data;
+        }
+
+        // --- 核心：去除节流、满帧运行的 3D 缓动动画引擎 ---
+        function renderMapAnimated() {
+            if (!currentGeoJson) return;
+
+            // 如果有正在运行的动画，立刻中止，实现无缝连按
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+            }
+
+            // 记录当前高度作为动画起点
+            const startHeights = { ...currentHeights };
+            const targetHeights = {};
+
+            currentGeoJson.features.forEach(feature => {
+                const name = feature.properties.name;
+                const stepKey = getStepKeyByProvince(name);
+                const isActive = activeSteps.has(stepKey);
+                targetHeights[name] = isActive ? stepsData[stepKey].targetHeight : 1.0;
+            });
+
+            // 动画总时长设为 800ms，起步极快，落地沉稳
+            const duration = 800; 
+            const startTime = performance.now();
+
+            function step(currentTime) {
+                let progress = (currentTime - startTime) / duration;
+                if (progress > 1) progress = 1;
+
+                // 定义 ease 缓动函数，消除机械僵硬感
+                const ease = 1 - Math.pow(1 - progress, 3);
+
+                // 计算当前帧每个省份的插值高度
+                currentGeoJson.features.forEach(feature => {
+                    const name = feature.properties.name;
+                    const startH = startHeights[name];
+                    const targetH = targetHeights[name];
+                    currentHeights[name] = startH + (targetH - startH) * ease;
+                });
+
+                // 将计算好的这一帧高度和跟随标签更新给图表
+                myChart.setOption({
+                    geo3D: {
+                        regions: getRegionsStateForRender(currentHeights)
+                    },
+                    series: [{
+                        data: getLabelData(currentHeights)
+                    }]
+                });
+
+                if (progress < 1) {
+                    animationFrameId = requestAnimationFrame(step);
+                }
+            }
+
+            animationFrameId = requestAnimationFrame(step);
+        }
+
+        // 交互逻辑：供底部按钮调用
+        function highlightStep(targetStepKey) {
+            // 累加激活状态
+            activeSteps.add(targetStepKey);
+
+            // 更新按钮高亮 UI
+            ['step1', 'step2', 'step3'].forEach(key => {
+                const btn = document.getElementById(`btn-${key}`);
+                if (activeSteps.has(key)) {
+                    btn.classList.add('active');
+                    btn.style.backgroundColor = stepsData[key].color;
+                } else {
+                    btn.classList.remove('active');
+                    btn.style.backgroundColor = '';
+                }
+            });
+
+            // 启动物理平滑升起动画
+            renderMapAnimated();
+        }
+
+        // 复原降落
+        function resetMap() {
+            activeSteps.clear();
+            
+            ['step1', 'step2', 'step3'].forEach(key => {
+                const btn = document.getElementById(`btn-${key}`);
+                btn.classList.remove('active');
+                btn.style.backgroundColor = '';
+            });
+            
+            // 启动平滑降落动画
+            renderMapAnimated();
+        }
+
+        window.addEventListener('resize', () => { myChart.resize(); });
+    </script>
+</body>
+</html>
